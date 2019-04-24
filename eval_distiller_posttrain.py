@@ -2,6 +2,7 @@ from utils import *
 from datasets import PascalVOCDataset
 from tqdm import tqdm
 from pprint import PrettyPrinter
+import distiller
 
 # Good formatting when printing the APs for each class and mAP
 pp = PrettyPrinter()
@@ -17,6 +18,10 @@ checkpoint = './BEST_checkpoint_ssd300.pth.tar'
 # Load model checkpoint that is to be evaluated
 checkpoint = torch.load(checkpoint)
 model = checkpoint['model']
+# ref. distiller/examples/classifier_compression/compress_classifier.py
+quantizer = distiller.quantization.PostTrainLinearQuantizer(model, bits_activations=4, bits_parameters=4)
+quantizer.prepare_model()
+#
 model = model.to(device)
 
 # Switch to eval mode

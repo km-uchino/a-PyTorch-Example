@@ -1,6 +1,7 @@
 from torchvision import transforms
 from utils import *
 from PIL import Image, ImageDraw, ImageFont
+import distiller
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -11,6 +12,11 @@ start_epoch = checkpoint['epoch'] + 1
 best_loss = checkpoint['best_loss']
 print('\nLoaded checkpoint from epoch %d. Best loss so far is %.3f.\n' % (start_epoch, best_loss))
 model = checkpoint['model']
+# ref. distiller/examples/classifier_compression/compress_classifier.py
+#model.cpu()
+quantizer = distiller.quantization.PostTrainLinearQuantizer(model, bits_activations=5, bits_parameters=5)
+quantizer.prepare_model()
+#
 model = model.to(device)
 model.eval()
 
