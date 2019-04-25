@@ -1,0 +1,14 @@
+*.pyc
+*.npy
+*.o
+*.so
+*.log
+*.bin
+*.raw
+*.jpg
+*.bmp
+*.png
+*.caffemodel
+*.prototxt
+*~
+*_

@@ -1,5 +1,7 @@
+import math
 import time
 import os
+import traceback
 import torch.backends.cudnn as cudnn
 import torch.optim
 import torch.utils.data
@@ -11,13 +13,12 @@ from utils import *
 from tensorboardX import SummaryWriter
 writer = SummaryWriter()
 
+# distiller
 import distiller
 import distiller.apputils as apputils
 import distiller.model_summaries as model_summaries
 from   distiller.data_loggers import *
 import distiller.quantization as quantization
-#import parser
-
 
 # Data parameters
 data_folder = './'  # folder with data files
@@ -52,7 +53,8 @@ msglogger = None
 # classifier_compression ではargsだったもの
 args_output_dir = './logs/'
 args_name = 'test'
-#args_compress = 'quant_aware_train_linear_quant.yaml'
+args_compress = 'quant_aware_train_linear_quant.yaml'
+args_arch = 'SSD'
 
 def main():
     """
@@ -77,33 +79,60 @@ def main():
     #apputils.log_execution_env_state(args.compress, msglogger.logdir, gitroot=module_path)
     msglogger.debug("Distiller: %s", distiller.__version__)
     
-    # Initialize model or load checkpoint
-    if checkpoint is None:
-        model = SSD300(n_classes=n_classes)
-        # Initialize the optimizer, with twice the default learning rate for biases, as in the original Caffe repo
-        biases = list()
-        not_biases = list()
-        for param_name, param in model.named_parameters():
-            if param.requires_grad:
-                if param_name.endswith('.bias'):
-                    biases.append(param)
-                else:
-                    not_biases.append(param)
-        optimizer = torch.optim.SGD(params=[{'params': biases, 'lr': 2 * lr}, {'params': not_biases}],
-                                    lr=lr, momentum=momentum, weight_decay=weight_decay)
-
-    else:
-        checkpoint = torch.load(checkpoint)
-        start_epoch = checkpoint['epoch'] + 1
-        epochs_since_improvement = checkpoint['epochs_since_improvement']
-        best_loss = checkpoint['best_loss']
-        print('\nLoaded checkpoint from epoch %d. Best loss so far is %.3f.\n' % (start_epoch, best_loss))
-        model = checkpoint['model']
-        optimizer = checkpoint['optimizer']
+    ## Initialize model or load checkpoint
+    #if checkpoint is None:
+    #    model = SSD300(n_classes=n_classes)
+    #    # Initialize the optimizer, with twice the default learning rate for biases, as in the original Caffe repo
+    #    biases = list()
+    #    not_biases = list()
+    #    for param_name, param in model.named_parameters():
+    #        if param.requires_grad:
+    #            if param_name.endswith('.bias'):
+    #                biases.append(param)
+    #            else:
+    #                not_biases.append(param)
+    #    #optimizer = torch.optim.SGD(params=[{'params': biases, 'lr': 2 * lr}, {'params': not_biases}],
+    #    #                            lr=lr, momentum=momentum, weight_decay=weight_decay)
+    #    optimizer = torch.optim.SGD(model.parameters(),
+    #                                lr=lr, momentum=momentum, weight_decay=weight_decay)
+    #
+    #else:
+    #    checkpoint = torch.load(checkpoint)
+    #    start_epoch = checkpoint['epoch'] + 1
+    #    epochs_since_improvement = checkpoint['epochs_since_improvement']
+    #    best_loss = checkpoint['best_loss']
+    #    print('\nLoaded checkpoint from epoch %d. Best loss so far is %.3f.\n' % (start_epoch, best_loss))
+    #    model = checkpoint['model']
+    #    optimizer = checkpoint['optimizer']
+        
+    # load checkpoint
+    checkpoint = torch.load(checkpoint)
+    start_epoch = checkpoint['epoch'] + 1
+    epochs_since_improvement = checkpoint['epochs_since_improvement']
+    best_loss = checkpoint['best_loss']
+    print('\nLoaded checkpoint from epoch %d. Best loss so far is %.3f.\n' % (start_epoch, best_loss))
+    model = checkpoint['model']
+    #optimizer = checkpoint['optimizer']
+    optimizer = torch.optim.SGD(model.parameters(),
+                                lr=lr, momentum=momentum, weight_decay=weight_decay)
 
     # Move to default device
     model = model.to(device)
 
+    compression_scheduler = None
+    # The main use-case for this sample application is CNN compression. 
+    # Compression requires a compression schedule configuration file in YAML.
+    print('model:{:}'.format(model))
+    print('optimizer:{:}'.format(optimizer))
+    print('args_compress:{:}'.format(args_compress))
+    print('compression_scheduler:{:}'.format(compression_scheduler))
+    compression_scheduler = distiller.file_config(model, optimizer, args_compress, compression_scheduler,
+                                                  #(start_epoch-1) if args.resumed_checkpoint_path else None)
+                                                  None)
+    print(compression_scheduler)
+    # Model is re-transferred to GPU in case parameters were added (e.g. PACTQuantizer)
+    model.to(device)
+    
     # Create a couple of logging backends.  TensorBoardLogger writes log files in a format
     # that can be read by Google's Tensor Board.  PythonLogger writes to the Python logger.
     #tflogger = TensorBoardLogger(msglogger.logdir)
@@ -139,12 +168,16 @@ def main():
         # So, when you're ready to decay the learning rate, just set checkpoint = 'BEST_checkpoint_ssd300.pth.tar' above
         # and have adjust_learning_rate(optimizer, 0.1) BEFORE this 'for' loop
 
+        ### distiller ###
+        compression_scheduler.on_epoch_begin(epoch)  
+
         # One epoch's training
         train(train_loader=train_loader,
               model=model,
               criterion=criterion,
               optimizer=optimizer,
-              epoch=epoch)
+              epoch=epoch,
+              compression_scheduler=compression_scheduler)
 
         # One epoch's validation
         val_loss = validate(val_loader=val_loader,
@@ -164,13 +197,23 @@ def main():
             epochs_since_improvement = 0
 
         # Save checkpoint
-        save_checkpoint(epoch, epochs_since_improvement, model, optimizer, val_loss, best_loss, is_best)
+        #save_checkpoint(epoch, epochs_since_improvement, model, optimizer, val_loss, best_loss, is_best)
+        #checkpoint_extras = {'current_top1': top1,
+        #                     'best_top1': perf_scores_history[0].top1,
+        #                     'best_epoch': perf_scores_history[0].epoch}
+        apputils.save_checkpoint(epoch, args_arch, model, optimizer=optimizer, scheduler=compression_scheduler,
+                                 #extras=checkpoint_extras, is_best=is_best, name=args.name, dir=msglogger.logdir)
+                                 is_best=is_best, name=args_name, dir=msglogger.logdir)
 
+        ### distiller ###
+        compression_scheduler.on_epoch_end(epoch, optimizer)
+        
     # export scalar data to JSON for external processing
     writer.export_scalars_to_json("./all_scalars.json")
     writer.close()        
 
-def train(train_loader, model, criterion, optimizer, epoch):
+#def train(train_loader, model, criterion, optimizer, epoch):
+def train(train_loader, model, criterion, optimizer, epoch, compression_scheduler):
     """
     One epoch's training.
 
@@ -186,11 +229,19 @@ def train(train_loader, model, criterion, optimizer, epoch):
     data_time = AverageMeter()  # data loading time
     losses = AverageMeter()  # loss
 
+    total_samples = len(train_loader.sampler)
+    batch_size = train_loader.batch_size
+    steps_per_epoch = math.ceil(total_samples / batch_size)
+
     start = time.time()
 
     # Batches
     for i, (images, boxes, labels, _) in enumerate(train_loader):
         data_time.update(time.time() - start)
+
+        ### distiller ###
+        #compression_scheduler.on_minibatch_begin(epoch)
+        compression_scheduler.on_minibatch_begin(epoch, i, steps_per_epoch, optimizer)
 
         # Move to default device
         images = images.to(device)  # (batch_size (N), 3, 300, 300)
@@ -203,6 +254,12 @@ def train(train_loader, model, criterion, optimizer, epoch):
         # Loss
         loss = criterion(predicted_locs, predicted_scores, boxes, labels)  # scalar
 
+        ### distiller ###
+        #compression_scheduler.before_backward_pass(epoch)
+        agg_loss = compression_scheduler.before_backward_pass(epoch, i, steps_per_epoch, loss,
+                                                              optimizer=optimizer, return_loss_components=True)
+        loss = agg_loss.overall_loss
+        
         # Backward prop.
         optimizer.zero_grad()
         loss.backward()
@@ -211,9 +268,14 @@ def train(train_loader, model, criterion, optimizer, epoch):
         if grad_clip is not None:
             clip_gradient(optimizer, grad_clip)
 
+        compression_scheduler.before_parameter_optimization(epoch, i, steps_per_epoch, optimizer)
         # Update model
         optimizer.step()
 
+        ### distiller ###
+        #compression_scheduler.on_minibatch_end(epoch)
+        compression_scheduler.on_minibatch_end(epoch, i, steps_per_epoch, optimizer)
+        
         losses.update(loss.item(), images.size(0))
         batch_time.update(time.time() - start)
 
@@ -227,6 +289,9 @@ def train(train_loader, model, criterion, optimizer, epoch):
                   'Loss {loss.val:.4f} ({loss.avg:.4f})\t'.format(epoch, i, len(train_loader),
                                                                   batch_time=batch_time,
                                                                   data_time=data_time, loss=losses))
+        # test
+        if i == print_freq:
+            break
     del predicted_locs, predicted_scores, images, boxes, labels  # free some memory since their histories may be stored
 
 
@@ -274,6 +339,9 @@ def validate(val_loader, model, criterion):
                       'Loss {loss.val:.4f} ({loss.avg:.4f})\t'.format(i, len(val_loader),
                                                                       batch_time=batch_time,
                                                                       loss=losses))
+            # test
+            if i == print_freq:
+                break
 
     print('\n * LOSS - {loss.avg:.3f}\n'.format(loss=losses))
 
@@ -282,6 +350,7 @@ def validate(val_loader, model, criterion):
 
 def check_pytorch_version():
     from pkg_resources import parse_version
+    print('torch.__version__:{:}'.format(torch.__version__))
     if parse_version(torch.__version__) < parse_version('1.0.1'):
         print("\nNOTICE:")
         print("The Distiller \'master\' branch now requires at least PyTorch version 1.0.1 due to "
