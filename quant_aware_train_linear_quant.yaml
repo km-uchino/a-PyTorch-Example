@@ -34,13 +34,15 @@ quantizers:
     #mode: 'ASYMMETRIC_UNSIGNED'  # Can try "SYMMETRIC" as well
     mode: 'SYMMETRIC'
     ema_decay: 0.999   # Decay value for exponential moving average tracking of activation ranges
-    per_channel_wts: True
+    per_channel_wts: False
+#    clip_acts: True
 
 lr_schedulers:
   training_lr:
     class: MultiStepLR
-    milestones: [5, 10, 15, 20, 25]
-    gamma: 0.5
+    milestones: [190, 195, 200, 205, 210, 215, 220, 225, 230, 235, 240,
+                 245, 250, 255, 260, 265, 270, 275, 280, 285, 290, 295]
+    gamma: 0.7
 
 policies:
     - quantizer:

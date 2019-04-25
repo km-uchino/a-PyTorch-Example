@@ -9,16 +9,16 @@ from model import SSD300, MultiBoxLoss
 from datasets import PascalVOCDataset
 from utils import *
 
-# tensorboardX
-from tensorboardX import SummaryWriter
-writer = SummaryWriter()
-
 # distiller
 import distiller
 import distiller.apputils as apputils
 import distiller.model_summaries as model_summaries
 from   distiller.data_loggers import *
 import distiller.quantization as quantization
+
+# tensorboardX
+from tensorboardX import SummaryWriter
+writer = SummaryWriter()
 
 # Data parameters
 data_folder = './'  # folder with data files
@@ -34,7 +34,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 checkpoint = 'BEST_checkpoint_ssd300.pth.tar'
 batch_size = 8  # batch size
 start_epoch = 0  # start at this epoch
-epochs = 190  # number of epochs to run without early-stopping
+epochs = 300  # number of epochs to run without early-stopping
 #epochs = 20  # number of epochs to run without early-stopping
 epochs_since_improvement = 0  # number of epochs since there was an improvement in the validation metric
 best_loss = 100.  # assume a high loss at first
@@ -109,7 +109,7 @@ def main():
     checkpoint = torch.load(checkpoint)
     start_epoch = checkpoint['epoch'] + 1
     epochs_since_improvement = checkpoint['epochs_since_improvement']
-    best_loss = checkpoint['best_loss']
+    #best_loss = checkpoint['best_loss']                 # pre-trained modelのbest_lossからだと、量子化で悪化するため
     print('\nLoaded checkpoint from epoch %d. Best loss so far is %.3f.\n' % (start_epoch, best_loss))
     model = checkpoint['model']
     #optimizer = checkpoint['optimizer']
@@ -123,13 +123,13 @@ def main():
     # The main use-case for this sample application is CNN compression. 
     # Compression requires a compression schedule configuration file in YAML.
     print('model:{:}'.format(model))
-    print('optimizer:{:}'.format(optimizer))
-    print('args_compress:{:}'.format(args_compress))
-    print('compression_scheduler:{:}'.format(compression_scheduler))
     compression_scheduler = distiller.file_config(model, optimizer, args_compress, compression_scheduler,
                                                   #(start_epoch-1) if args.resumed_checkpoint_path else None)
                                                   None)
-    print(compression_scheduler)
+    print('model:{:}'.format(model))
+    print('optimizer:{:}'.format(optimizer))
+    print('args_compress:{:}'.format(args_compress))
+    print('compression_scheduler:{:}'.format(compression_scheduler))
     # Model is re-transferred to GPU in case parameters were added (e.g. PACTQuantizer)
     model.to(device)
     
@@ -170,6 +170,7 @@ def main():
 
         ### distiller ###
         compression_scheduler.on_epoch_begin(epoch)  
+        print('epoch:{:}   lr:{:}'.format(epoch, optimizer.param_groups[0]['lr']))
 
         # One epoch's training
         train(train_loader=train_loader,
@@ -184,6 +185,7 @@ def main():
                             model=model,
                             criterion=criterion)
         writer.add_scalar('data/val_loss', val_loss, epoch)
+        writer.add_scalar('data/lr', optimizer.param_groups[0]['lr'], epoch)
 
         # Did validation loss improve?
         is_best = val_loss < best_loss
@@ -245,7 +247,7 @@ def train(train_loader, model, criterion, optimizer, epoch, compression_schedule
 
         # Move to default device
         images = images.to(device)  # (batch_size (N), 3, 300, 300)
-        boxes = [b.to(device) for b in boxes]
+        boxes  = [b.to(device) for b in boxes]
         labels = [l.to(device) for l in labels]
 
         # Forward prop.
@@ -289,9 +291,9 @@ def train(train_loader, model, criterion, optimizer, epoch, compression_schedule
                   'Loss {loss.val:.4f} ({loss.avg:.4f})\t'.format(epoch, i, len(train_loader),
                                                                   batch_time=batch_time,
                                                                   data_time=data_time, loss=losses))
-        # test
-        if i == print_freq:
-            break
+        ## test
+        #if i == print_freq:
+        #    break
     del predicted_locs, predicted_scores, images, boxes, labels  # free some memory since their histories may be stored
 
 
@@ -318,7 +320,7 @@ def validate(val_loader, model, criterion):
 
             # Move to default device
             images = images.to(device)  # (N, 3, 300, 300)
-            boxes = [b.to(device) for b in boxes]
+            boxes  = [b.to(device) for b in boxes]
             labels = [l.to(device) for l in labels]
 
             # Forward prop.
@@ -339,9 +341,9 @@ def validate(val_loader, model, criterion):
                       'Loss {loss.val:.4f} ({loss.avg:.4f})\t'.format(i, len(val_loader),
                                                                       batch_time=batch_time,
                                                                       loss=losses))
-            # test
-            if i == print_freq:
-                break
+            ## test
+            #if i == print_freq:
+            #    break
 
     print('\n * LOSS - {loss.avg:.3f}\n'.format(loss=losses))
 
