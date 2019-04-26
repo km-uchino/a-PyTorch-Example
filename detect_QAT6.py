@@ -6,10 +6,6 @@ from PIL import Image, ImageDraw, ImageFont
 from model import SSD300, MultiBoxLoss
 # distiller
 import distiller
-import distiller.apputils as apputils
-import distiller.model_summaries as model_summaries
-from   distiller.data_loggers import *
-import distiller.quantization as quantization
 
 def my_load_checkpoint(model, chkpt_file, optimizer=None, model_device=None, *, lean_checkpoint=False):
     """Load a pytorch training checkpoint.
@@ -49,10 +45,15 @@ def my_load_checkpoint(model, chkpt_file, optimizer=None, model_device=None, *, 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 args_resumed_checkpoint_path = 'BEST_checkpoint_ssd300_QATL6.pth.tar'
+
+# とりあえず、ベースのSSD300モデルをロード
 n_classes = len(label_map)  # utils.py : number of different types of objects
 model = SSD300(n_classes=n_classes)
+# 使わないけどoptimizerを作成 (my_load_checkpointにoptimizerを渡さないとエラーになるので)
 optimizer = torch.optim.SGD(model.parameters(), lr=0.001, momentum=0.9, weight_decay=0.0001)
+# checkpointに保存された読み込む
 model = my_load_checkpoint(model, args_resumed_checkpoint_path, optimizer=optimizer, model_device=device)
+# Switch to eval mode
 model.eval()                # eval mode disables dropout
 
 # Transforms
